@@ -4,11 +4,13 @@
 #include <PINS_JC4827W543.h>    // Install "GFX Library for Arduino" with the Library Manager (last tested on v1.5.6)
                                 // Install "Dev Device Pins" with the Library Manager (last tested on v0.0.2)
 #include <AnimatedGIF.h>        // Install "AnimatedGIF" with the Library Manager (last tested on v2.2.0)
-#include "TAMC_GT911.h"         // Install "TAMC_GT911" with the Library Manager (last tested on v1.0.2)
 #include <SD.h>                 // Included with the Espressif Arduino Core (last tested on v3.2.0)
-#include "FreeSansBold12pt7b.h" // Included in this project
 
 const char *GIF_FOLDER = "/gif";
+const uint8_t VIDEO_PINS[] = {46, 9, 14};
+const uint8_t VIDEO_COUNT = sizeof(VIDEO_PINS) / sizeof(VIDEO_PINS[0]);
+const uint8_t VIDEO_ACTIVE_LEVEL = HIGH;
+
 AnimatedGIF gif;
 int16_t display_width, display_height;
 
@@ -17,8 +19,8 @@ int16_t display_width, display_height;
 String gifFileList[MAX_FILES];
 uint32_t gifFileSizes[MAX_FILES] = {0}; // Store each GIF file's size in bytes
 int fileCount = 0;
-static int currentFile = 0;
 static File FSGifFile; // temp gif file holder
+static int lastSelectedVideo = -2;
 
 static SPIClass spiSD{HSPI};
 
@@ -27,17 +29,18 @@ static SPIClass spiSD{HSPI};
 uint8_t *psramBuffer = NULL;
 size_t reservedPSRAMSize = 0;
 
-// Touch Controller
-#define TOUCH_SDA 8
-#define TOUCH_SCL 4
-#define TOUCH_INT 3
-#define TOUCH_RST 38
-#define TOUCH_WIDTH 480
-#define TOUCH_HEIGHT 272
-#define TITLE_REGION_Y (gfx->height() / 3 - 30)
-#define TITLE_REGION_H 35
-#define TITLE_REGION_W (gfx->width())
-TAMC_GT911 touchController = TAMC_GT911(TOUCH_SDA, TOUCH_SCL, TOUCH_INT, TOUCH_RST, TOUCH_WIDTH, TOUCH_HEIGHT);
+void loadGifFilesList();
+void sortGifFilesByName();
+int getSelectedVideoIndex();
+bool isVideoStillSelected(int expectedVideo);
+void playSelectedFile(int fileindex);
+uint8_t *reservePSRAM();
+void gifPlayFromSDCard(const char *gifPath, int expectedVideo);
+static void *GIFOpenFile(const char *fname, int32_t *pSize);
+static void GIFCloseFile(void *pHandle);
+static int32_t GIFReadFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen);
+static int32_t GIFSeekFile(GIFFILE *pFile, int32_t iPosition);
+void GIFDraw(GIFDRAW *pDraw);
 
 void setup()
 {
@@ -65,18 +68,17 @@ void setup()
     }
   }
   gfx->fillScreen(RGB565_BLACK);
-  gfx->setFont(&FreeSansBold12pt7b);
 
   pinMode(GFX_BL, OUTPUT);
   digitalWrite(GFX_BL, HIGH); // Set the backlight of the screen to High intensity
+  for (uint8_t i = 0; i < VIDEO_COUNT; i++)
+  {
+    pinMode(VIDEO_PINS[i], INPUT);
+  }
 
   display_width = gfx->width();
   display_height = gfx->height();
   gif.begin(BIG_ENDIAN_PIXELS);
-
-  // Start the touch controller
-  touchController.begin();
-  touchController.setRotation(ROTATION_INVERTED); // Change as needed
 
   if (!psramFound())
   {
@@ -93,167 +95,95 @@ void setup()
 
   Serial.println("Loading GIF files list");
   loadGifFilesList();
-  displaySelectedFile();
-}
+  if (fileCount < VIDEO_COUNT)
+  {
+    Serial.printf("Need at least %u GIF files in %s, found %d.\n", VIDEO_COUNT, GIF_FOLDER, fileCount);
+    while (true)
+    {
+      delay(1000);
+    }
+  }
 
-// UI Gif file selection
-void displaySelectedFile()
-{
-  // Clear the screen
-  gfx->fillScreen(RGB565_BLACK);
-
-  int screenW = gfx->width();
-  int screenH = gfx->height();
-  int centerY = screenH / 2;
-  int arrowSize = 40; // size of the arrow icon (adjust as needed)
-  int margin = 10;    // margin from screen edge
-
-  // --- Draw Left Arrow ---
-  // The left arrow is drawn as a filled triangle at the left side.
-  gfx->fillTriangle(margin, centerY,
-                    margin + arrowSize, centerY - arrowSize / 2,
-                    margin + arrowSize, centerY + arrowSize / 2,
-                    RGB565_WHITE);
-
-  // --- Draw Right Arrow ---
-  // Draw the right arrow as a filled triangle at the right side.
-  gfx->fillTriangle(screenW - margin, centerY,
-                    screenW - margin - arrowSize, centerY - arrowSize / 2,
-                    screenW - margin - arrowSize, centerY + arrowSize / 2,
-                    RGB565_WHITE);
-
-  // --- Draw the Title ---
-  // Get the file title string.
-  String title = gifFileList[currentFile];
-  int16_t x1, y1;
-  uint16_t textW, textH;
-  gfx->getTextBounds(title.c_str(), 0, 0, &x1, &y1, &textW, &textH);
-  // Calculate x so the text is centered.
-  int titleX = (screenW - textW) / 2 - x1;
-  // Position the title above the play button; here we place it at roughly one-third of the screen height.
-  int titleY = screenH / 3;
-  gfx->setCursor(titleX, titleY);
-  gfx->print(title);
-
-  // --- Draw the Play Button ---
-  // Define the play button size and location.
-  int playButtonSize = 50;
-  int playX = (screenW - playButtonSize) / 2;
-  int playY = screenH - playButtonSize - 20; // 20 pixels from bottom
-  // Draw a filled circle for the button background.
-  gfx->fillCircle(playX + playButtonSize / 2, playY + playButtonSize / 2, playButtonSize / 2, RGB565_DARKGREEN);
-  // Draw a play–icon (triangle) inside the circle.
-  int triX = playX + playButtonSize / 2 - playButtonSize / 4;
-  int triY = playY + playButtonSize / 2;
-  gfx->fillTriangle(triX, triY - playButtonSize / 4,
-                    triX, triY + playButtonSize / 4,
-                    triX + playButtonSize / 2, triY,
-                    RGB565_WHITE);
+  sortGifFilesByName();
+  Serial.println("Pin to GIF mapping:");
+  for (uint8_t i = 0; i < VIDEO_COUNT; i++)
+  {
+    Serial.printf("Pin %u -> %s\n", VIDEO_PINS[i], gifFileList[i].c_str());
+  }
 }
 
 void loop()
 {
-  touchController.read();
-  if (touchController.touches > 0)
+  int selectedVideo = getSelectedVideoIndex();
+
+  if (selectedVideo != lastSelectedVideo)
   {
-    int tx = touchController.points[0].x;
-    int ty = touchController.points[0].y;
-    Serial.printf("x=%d, y=%d\n", tx, ty);
-    int screenW = gfx->width();
-    int screenH = gfx->height();
-    int arrowSize = 40;
-    int margin = 10;
-    int playButtonSize = 50;
-    int playX = (screenW - playButtonSize) / 2;
-    int playY = screenH - playButtonSize - 20;
-
-    // Check if touch is in the left arrow area.
-    if (tx < margin + arrowSize && ty > (screenH / 2 - arrowSize) && ty < (screenH / 2 + arrowSize))
+    if (selectedVideo < 0)
     {
-      // Left arrow touched: cycle to previous file.
-      currentFile--;
-      if (currentFile < 0)
-        currentFile = fileCount - 1;
-      updateTitle();
-      while (touchController.touches > 0)
-      {
-        touchController.read();
-        delay(50);
-      }
-      delay(300);
+      Serial.println("No active pin, waiting...");
+      gfx->fillScreen(RGB565_BLACK);
     }
-    else if (tx > screenW - margin - arrowSize && ty > (screenH / 2 - arrowSize) && ty < (screenH / 2 + arrowSize))
+    else
     {
-      // Right arrow touched: cycle to next file.
-      currentFile++;
-      if (currentFile >= fileCount)
-        currentFile = 0;
-      updateTitle();
-      while (touchController.touches > 0)
-      {
-        touchController.read();
-        delay(50);
-      }
-      delay(300);
+      Serial.printf("Pin %u active -> %s\n", VIDEO_PINS[selectedVideo], gifFileList[selectedVideo].c_str());
     }
-    // Check if touch is in the play button area.
-    else if (tx >= playX && tx <= playX + playButtonSize &&
-             ty >= playY && ty <= playY + playButtonSize)
-    {
-      playSelectedFile(currentFile);
-      // Wait until the user fully releases the touch before refreshing the UI.
-      waitForTouchRelease();
-
-      // After playback, redisplay the selection screen.
-      displaySelectedFile();
-      while (touchController.touches > 0)
-      {
-        touchController.read();
-        delay(50);
-      }
-      delay(300);
-    }
+    lastSelectedVideo = selectedVideo;
   }
-  delay(50);
+
+  if (selectedVideo < 0)
+  {
+    delay(20);
+    return;
+  }
+
+  playSelectedFile(selectedVideo);
 }
 
-// Update the gif title on the screen
-void updateTitle()
+int getSelectedVideoIndex()
 {
-  // Clear the entire title area
-  gfx->fillRect(0, TITLE_REGION_Y, TITLE_REGION_W, TITLE_REGION_H, RGB565_BLACK);
-
-  // Retrieve the new title
-  String title = gifFileList[currentFile];
-
-  // Get text dimensions for the new title
-  int16_t x1, y1;
-  uint16_t textW, textH;
-  gfx->getTextBounds(title.c_str(), 0, 0, &x1, &y1, &textW, &textH);
-
-  // Center the text in the fixed title region:
-  int titleX = (TITLE_REGION_W - textW) / 2 - x1;
-  int titleY = TITLE_REGION_Y + (TITLE_REGION_H + textH) / 2;
-
-  gfx->setCursor(titleX, titleY);
-  gfx->print(title);
+  for (uint8_t i = 0; i < VIDEO_COUNT; i++)
+  {
+    if (digitalRead(VIDEO_PINS[i]) == VIDEO_ACTIVE_LEVEL)
+    {
+      return i;
+    }
+  }
+  return -1;
 }
 
-// Continuously read until no touches are registered.
-void waitForTouchRelease()
+bool isVideoStillSelected(int expectedVideo)
 {
-  while (touchController.touches > 0)
+  return getSelectedVideoIndex() == expectedVideo;
+}
+
+void sortGifFilesByName()
+{
+  for (int i = 0; i < fileCount - 1; i++)
   {
-    touchController.read();
-    delay(50);
+    for (int j = i + 1; j < fileCount; j++)
+    {
+      if (gifFileList[j].compareTo(gifFileList[i]) < 0)
+      {
+        String tempName = gifFileList[i];
+        gifFileList[i] = gifFileList[j];
+        gifFileList[j] = tempName;
+
+        uint32_t tempSize = gifFileSizes[i];
+        gifFileSizes[i] = gifFileSizes[j];
+        gifFileSizes[j] = tempSize;
+      }
+    }
   }
-  // Extra debounce delay to ensure that the touch state is fully cleared.
-  delay(300);
 }
 
 // Play the selected gif file
 void playSelectedFile(int fileindex)
 {
+  if (fileindex < 0 || fileindex >= fileCount)
+  {
+    return;
+  }
+
   // Build the full path for the selected GIF.
   String fullPath = String(GIF_FOLDER) + "/" + gifFileList[fileindex];
   char gifFilename[128];
@@ -262,12 +192,8 @@ void playSelectedFile(int fileindex)
   Serial.printf("Playing %s\n", gifFilename);
 
   // Check if the file can fit in the reserved PSRAM, playing from PSRAM instead of the SD card is faster
-  if (gifFileSizes[fileindex] <= reservedPSRAMSize)
+  if (psramBuffer != NULL && gifFileSizes[fileindex] <= reservedPSRAMSize)
   {
-    gfx->fillScreen(RGB565_BLACK);
-    gfx->setCursor(20, 100);
-    gfx->print("Loading GIF in PSRAM...");
-
     File gifFile = SD.open(gifFilename);
     if (gifFile)
     {
@@ -280,29 +206,34 @@ void playSelectedFile(int fileindex)
       if (gif.open(psramBuffer, fileSize, GIFDraw))
       {
         Serial.printf("Successfully opened GIF from PSRAM.\n");
-        while (gif.playFrame(false, NULL))
+        while (isVideoStillSelected(fileindex) && gif.playFrame(false, NULL))
         {
-          // Animation loop
         }
         gif.close();
       }
       else
       {
         Serial.printf("Failed to open GIF from PSRAM, falling back to SD.\n");
-        gifPlayFromSDCard(gifFilename);
+        gifPlayFromSDCard(gifFilename, fileindex);
       }
     }
     else
     {
       Serial.printf("Failed to open %s for reading into PSRAM.\n", gifFilename);
-      gifPlayFromSDCard(gifFilename);
+      gifPlayFromSDCard(gifFilename, fileindex);
     }
   }
   else
   {
-    // File too big to fit in reserved PSRAM; open it directly from SD.
-    Serial.printf("File too big to fit in reserved PSRAM; open it directly from SD.\n");
-    gifPlayFromSDCard(gifFilename);
+    if (psramBuffer == NULL)
+    {
+      Serial.println("PSRAM buffer unavailable; opening GIF directly from SD.");
+    }
+    else
+    {
+      Serial.println("File too big for reserved PSRAM; opening GIF directly from SD.");
+    }
+    gifPlayFromSDCard(gifFilename, fileindex);
   }
 }
 
@@ -345,7 +276,7 @@ uint8_t *reservePSRAM()
 }
 
 // Play a gif directly from the SD card
-void gifPlayFromSDCard(char *gifPath)
+void gifPlayFromSDCard(const char *gifPath, int expectedVideo)
 {
 
   if (!gif.open(gifPath, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw))
@@ -355,12 +286,9 @@ void gifPlayFromSDCard(char *gifPath)
   else
   {
     gfx->fillScreen(RGB565_BLACK);
-    gfx->setCursor(20, 100);
-    gfx->print("Playing GIF from SD Card...");
-    delay(1000);
     Serial.printf("Starting playing gif %s\n", gifPath);
 
-    while (gif.playFrame(false /*change to true to use the internal gif frame duration*/, NULL))
+    while (isVideoStillSelected(expectedVideo) && gif.playFrame(false /*change to true to use the internal gif frame duration*/, NULL))
     {
     }
 
@@ -587,3 +515,4 @@ void printGifErrorMessage(int errorCode)
     break;
   }
 }
+
