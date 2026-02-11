@@ -74,7 +74,7 @@ void setup()
   digitalWrite(GFX_BL, HIGH); // Set the backlight of the screen to High intensity
   for (uint8_t i = 0; i < VIDEO_COUNT; i++)
   {
-    pinMode(VIDEO_PINS[i], INPUT);
+    pinMode(VIDEO_PINS[i], INPUT_PULLDOWN);
   }
 
   display_width = gfx->width();
