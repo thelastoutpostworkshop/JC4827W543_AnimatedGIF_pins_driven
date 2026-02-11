@@ -6,19 +6,21 @@
 #include <AnimatedGIF.h>        // Install "AnimatedGIF" with the Library Manager (last tested on v2.2.0)
 #include <SD.h>                 // Included with the Espressif Arduino Core (last tested on v3.2.0)
 
-const char *GIF_FOLDER = "/gif";
 const uint8_t VIDEO_PINS[] = {46, 9, 14};
 const uint8_t VIDEO_COUNT = sizeof(VIDEO_PINS) / sizeof(VIDEO_PINS[0]);
 const uint8_t VIDEO_ACTIVE_LEVEL = HIGH;
+const char *VIDEO_GIF_PATHS[] = {
+    "/gif/alien_eye.gif", // Pin 46
+    "/gif/bird.gif", // Pin 9
+    "/gif/train.gif"  // Pin 14
+};
+
+static_assert((sizeof(VIDEO_GIF_PATHS) / sizeof(VIDEO_GIF_PATHS[0])) == VIDEO_COUNT,
+              "VIDEO_GIF_PATHS count must match VIDEO_PINS count");
 
 AnimatedGIF gif;
 int16_t display_width, display_height;
-
-// Storage for files to read on the SD card, adjust maximum value as needed
-#define MAX_FILES 20 // Adjust as needed
-String gifFileList[MAX_FILES];
-uint32_t gifFileSizes[MAX_FILES] = {0}; // Store each GIF file's size in bytes
-int fileCount = 0;
+uint32_t videoGifSizes[VIDEO_COUNT] = {0};
 static File FSGifFile; // temp gif file holder
 static int lastSelectedVideo = -2;
 
@@ -29,11 +31,10 @@ static SPIClass spiSD{HSPI};
 uint8_t *psramBuffer = NULL;
 size_t reservedPSRAMSize = 0;
 
-void loadGifFilesList();
-void sortGifFilesByName();
 int getSelectedVideoIndex();
 bool isVideoStillSelected(int expectedVideo);
 void playSelectedFile(int fileindex);
+bool loadHardcodedGifInfo();
 uint8_t *reservePSRAM();
 void gifPlayFromSDCard(const char *gifPath, int expectedVideo);
 static void *GIFOpenFile(const char *fname, int32_t *pSize);
@@ -93,22 +94,20 @@ void setup()
     // Handle error...
   }
 
-  Serial.println("Loading GIF files list");
-  loadGifFilesList();
-  if (fileCount < VIDEO_COUNT)
+  Serial.println("Loading hardcoded GIF paths");
+  if (!loadHardcodedGifInfo())
   {
-    Serial.printf("Need at least %u GIF files in %s, found %d.\n", VIDEO_COUNT, GIF_FOLDER, fileCount);
+    Serial.println("Failed to load one or more hardcoded GIF files.");
     while (true)
     {
       delay(1000);
     }
   }
 
-  sortGifFilesByName();
   Serial.println("Pin to GIF mapping:");
   for (uint8_t i = 0; i < VIDEO_COUNT; i++)
   {
-    Serial.printf("Pin %u -> %s\n", VIDEO_PINS[i], gifFileList[i].c_str());
+    Serial.printf("Pin %u -> %s\n", VIDEO_PINS[i], VIDEO_GIF_PATHS[i]);
   }
 }
 
@@ -125,7 +124,7 @@ void loop()
     }
     else
     {
-      Serial.printf("Pin %u active -> %s\n", VIDEO_PINS[selectedVideo], gifFileList[selectedVideo].c_str());
+      Serial.printf("Pin %u active -> %s\n", VIDEO_PINS[selectedVideo], VIDEO_GIF_PATHS[selectedVideo]);
     }
     lastSelectedVideo = selectedVideo;
   }
@@ -156,43 +155,39 @@ bool isVideoStillSelected(int expectedVideo)
   return getSelectedVideoIndex() == expectedVideo;
 }
 
-void sortGifFilesByName()
+bool loadHardcodedGifInfo()
 {
-  for (int i = 0; i < fileCount - 1; i++)
+  for (uint8_t i = 0; i < VIDEO_COUNT; i++)
   {
-    for (int j = i + 1; j < fileCount; j++)
+    File gifFile = SD.open(VIDEO_GIF_PATHS[i]);
+    if (!gifFile)
     {
-      if (gifFileList[j].compareTo(gifFileList[i]) < 0)
-      {
-        String tempName = gifFileList[i];
-        gifFileList[i] = gifFileList[j];
-        gifFileList[j] = tempName;
-
-        uint32_t tempSize = gifFileSizes[i];
-        gifFileSizes[i] = gifFileSizes[j];
-        gifFileSizes[j] = tempSize;
-      }
+      Serial.printf("Cannot open hardcoded GIF: %s\n", VIDEO_GIF_PATHS[i]);
+      return false;
     }
+
+    videoGifSizes[i] = gifFile.size();
+    Serial.printf("Path %u: %s (%lu bytes)\n", i, VIDEO_GIF_PATHS[i], videoGifSizes[i]);
+    gifFile.close();
   }
+
+  return true;
 }
 
 // Play the selected gif file
 void playSelectedFile(int fileindex)
 {
-  if (fileindex < 0 || fileindex >= fileCount)
+  if (fileindex < 0 || fileindex >= VIDEO_COUNT)
   {
     return;
   }
 
-  // Build the full path for the selected GIF.
-  String fullPath = String(GIF_FOLDER) + "/" + gifFileList[fileindex];
-  char gifFilename[128];
-  fullPath.toCharArray(gifFilename, sizeof(gifFilename));
+  const char *gifFilename = VIDEO_GIF_PATHS[fileindex];
 
   Serial.printf("Playing %s\n", gifFilename);
 
   // Check if the file can fit in the reserved PSRAM, playing from PSRAM instead of the SD card is faster
-  if (psramBuffer != NULL && gifFileSizes[fileindex] <= reservedPSRAMSize)
+  if (psramBuffer != NULL && videoGifSizes[fileindex] <= reservedPSRAMSize)
   {
     File gifFile = SD.open(gifFilename);
     if (gifFile)
@@ -343,44 +338,6 @@ static int32_t GIFSeekFile(GIFFILE *pFile, int32_t iPosition)
   i = micros() - i;
   // log_d("Seek time = %d us\n", i);
   return pFile->iPos;
-}
-
-// Read the gif file list in the gif folder
-void loadGifFilesList()
-{
-  File gifDir = SD.open(GIF_FOLDER);
-  if (!gifDir)
-  {
-    Serial.println("Failed to open GIF folder");
-    return;
-  }
-  fileCount = 0;
-  while (true)
-  {
-    File file = gifDir.openNextFile();
-    if (!file)
-      break;
-    if (!file.isDirectory())
-    {
-      String name = file.name();
-      if (name.endsWith(".gif") || name.endsWith(".GIF"))
-      {
-        gifFileList[fileCount] = name;
-        gifFileSizes[fileCount] = file.size(); // Save file size (in bytes)
-        fileCount++;
-        if (fileCount >= MAX_FILES)
-          break;
-      }
-    }
-    file.close();
-  }
-  gifDir.close();
-  Serial.printf("%d gif files read\n", fileCount);
-  // Optionally, print out each file's size for debugging:
-  for (int i = 0; i < fileCount; i++)
-  {
-    Serial.printf("File %d: %s, Size: %lu bytes\n", i, gifFileList[i].c_str(), gifFileSizes[i]);
-  }
 }
 
 // Callback function to Draw a line of image directly on the screen
