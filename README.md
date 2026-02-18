@@ -7,40 +7,40 @@ This project plays GIFs from SD card based on the state of 3 GPIO pins on an ESP
 Defined in `JC4827W543_AnimatedGIF_pins_driven.ino`:
 
 - `VIDEO_PINS[] = {46, 9, 14}`
-- `VIDEO_GIF_PATHS[] = {"/gif/video1.gif", "/gif/video2.gif", "/gif/video3.gif"}`
-- `VIDEO_ACTIVE_LEVEL = HIGH`
+- `VIDEO_GIF_PATHS[] = {"/gif/alien_eye.gif", "/gif/bird.gif", "/gif/train.gif"}`
+- `VIDEO_ACTIVE_LEVEL = LOW`
 
 Mapping:
 
-- Pin `46` -> `/gif/video1.gif`
-- Pin `9` -> `/gif/video2.gif`
-- Pin `14` -> `/gif/video3.gif`
+- Pin `46` -> `/gif/alien_eye.gif`
+- Pin `9` -> `/gif/bird.gif`
+- Pin `14` -> `/gif/train.gif`
 
 ## GIF File Requirements
 
 - GIF files must exist on the SD card at the exact hardcoded paths.
 - Current defaults:
-  - `/gif/video1.gif`
-  - `/gif/video2.gif`
-  - `/gif/video3.gif`
+  - `/gif/alien_eye.gif`
+  - `/gif/bird.gif`
+  - `/gif/train.gif`
 - On startup, the sketch verifies all 3 files can be opened.
 
-## Switch Wiring (Internal Pull-Down, Active-HIGH)
+## Switch Wiring (Internal Pull-Up, Active-LOW)
 
 The code currently uses:
 
-- `pinMode(pin, INPUT_PULLDOWN)`
-- `VIDEO_ACTIVE_LEVEL = HIGH`
+- `pinMode(pin, INPUT_PULLUP)`
+- `VIDEO_ACTIVE_LEVEL = LOW`
 
 Wiring per input pin:
 
-1. Connect one switch terminal to `3.3V`.
+1. Connect one switch terminal to `GND`.
 2. Connect the other switch terminal to GPIO (`46`, `9`, or `14`).
 
 Result:
 
-- Switch open -> pin reads `LOW` -> no GIF for that pin.
-- Switch closed -> pin reads `HIGH` -> corresponding GIF plays.
+- Switch open -> pin reads `HIGH` -> no GIF for that pin.
+- Switch closed -> pin reads `LOW` -> corresponding GIF plays.
 
 Important:
 
@@ -55,13 +55,13 @@ Important:
 
 ## Optional Alternatives
 
-If you prefer internal pull-ups:
+If you prefer internal pull-downs:
 
-1. Change `pinMode(VIDEO_PINS[i], INPUT_PULLDOWN)` to `INPUT_PULLUP`.
-2. Set `VIDEO_ACTIVE_LEVEL` to `LOW`.
-3. Wire each switch between GPIO and `GND`.
+1. Change `pinMode(VIDEO_PINS[i], INPUT_PULLUP)` to `INPUT_PULLDOWN`.
+2. Set `VIDEO_ACTIVE_LEVEL` to `HIGH`.
+3. Wire each switch between GPIO and `3.3V`.
 
-Then pressed switch = `LOW` = active.
+Then pressed switch = `HIGH` = active.
 
 ## Customization
 
