@@ -8,7 +8,7 @@
 
 const uint8_t VIDEO_PINS[] = {46, 9, 14};
 const uint8_t VIDEO_COUNT = sizeof(VIDEO_PINS) / sizeof(VIDEO_PINS[0]);
-const uint8_t VIDEO_ACTIVE_LEVEL = HIGH;
+const uint8_t VIDEO_ACTIVE_LEVEL = LOW;
 const char *VIDEO_GIF_PATHS[] = {
     "/gif/alien_eye.gif", // Pin 46
     "/gif/bird.gif", // Pin 9
@@ -23,6 +23,10 @@ int16_t display_width, display_height;
 uint32_t videoGifSizes[VIDEO_COUNT] = {0};
 static File FSGifFile; // temp gif file holder
 static int lastSelectedVideo = -2;
+static uint8_t lastVideoPinStates[VIDEO_COUNT] = {0};
+static bool videoPinStatesInitialized = false;
+static uint32_t lastPinLogTimeMs = 0;
+const uint32_t PIN_STATE_LOG_INTERVAL_MS = 500;
 
 static SPIClass spiSD{HSPI};
 
@@ -74,7 +78,7 @@ void setup()
   digitalWrite(GFX_BL, HIGH); // Set the backlight of the screen to High intensity
   for (uint8_t i = 0; i < VIDEO_COUNT; i++)
   {
-    pinMode(VIDEO_PINS[i], INPUT_PULLDOWN);
+    pinMode(VIDEO_PINS[i], INPUT_PULLUP);
   }
 
   display_width = gfx->width();
@@ -140,14 +144,50 @@ void loop()
 
 int getSelectedVideoIndex()
 {
+  int selectedVideo = -1;
+  uint8_t currentStates[VIDEO_COUNT];
+
   for (uint8_t i = 0; i < VIDEO_COUNT; i++)
   {
-    if (digitalRead(VIDEO_PINS[i]) == VIDEO_ACTIVE_LEVEL)
+    currentStates[i] = digitalRead(VIDEO_PINS[i]);
+    if (selectedVideo < 0 && currentStates[i] == VIDEO_ACTIVE_LEVEL)
     {
-      return i;
+      selectedVideo = i;
     }
   }
-  return -1;
+
+  bool hasStateChanged = !videoPinStatesInitialized;
+  if (!hasStateChanged)
+  {
+    for (uint8_t i = 0; i < VIDEO_COUNT; i++)
+    {
+      if (currentStates[i] != lastVideoPinStates[i])
+      {
+        hasStateChanged = true;
+        break;
+      }
+    }
+  }
+
+  const uint32_t now = millis();
+  if (hasStateChanged || (now - lastPinLogTimeMs >= PIN_STATE_LOG_INTERVAL_MS))
+  {
+    Serial.print("VIDEO_PINS states: ");
+    for (uint8_t i = 0; i < VIDEO_COUNT; i++)
+    {
+      Serial.printf("%u=%s", VIDEO_PINS[i], currentStates[i] == HIGH ? "HIGH" : "LOW");
+      if (i + 1 < VIDEO_COUNT)
+      {
+        Serial.print(", ");
+      }
+      lastVideoPinStates[i] = currentStates[i];
+    }
+    Serial.println();
+    videoPinStatesInitialized = true;
+    lastPinLogTimeMs = now;
+  }
+
+  return selectedVideo;
 }
 
 bool isVideoStillSelected(int expectedVideo)
