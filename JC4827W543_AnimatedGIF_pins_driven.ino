@@ -31,6 +31,7 @@ const uint32_t PIN_STATE_LOG_INTERVAL_MS = 500;
 static SPIClass spiSD{HSPI};
 
 // PSRAM for GIF playing optimization
+#define ENABLE_GIF_PSRAM_LOADING 0 // Set to 0 to always stream GIFs from SD.
 #define PSRAM_RESERVE_SIZE (100 * 1024) // Leave 100KB of PSRAM free
 uint8_t *psramBuffer = NULL;
 size_t reservedPSRAMSize = 0;
@@ -85,6 +86,7 @@ void setup()
   display_height = gfx->height();
   gif.begin(BIG_ENDIAN_PIXELS);
 
+#if ENABLE_GIF_PSRAM_LOADING
   if (!psramFound())
   {
     Serial.println("No PSRAM found > Enable it by selecting OPI PSRAM in the board configuration");
@@ -95,8 +97,10 @@ void setup()
   if (myBuffer == NULL)
   {
     Serial.println("PSRAM reserve failed!");
-    // Handle error...
   }
+#else
+  Serial.println("GIF PSRAM loading is disabled; reading GIFs directly from SD.");
+#endif
 
   Serial.println("Loading hardcoded GIF paths");
   if (!loadHardcodedGifInfo())
@@ -226,6 +230,7 @@ void playSelectedFile(int fileindex)
 
   Serial.printf("Playing %s\n", gifFilename);
 
+#if ENABLE_GIF_PSRAM_LOADING
   // Check if the file can fit in the reserved PSRAM, playing from PSRAM instead of the SD card is faster
   if (psramBuffer != NULL && videoGifSizes[fileindex] <= reservedPSRAMSize)
   {
@@ -270,6 +275,9 @@ void playSelectedFile(int fileindex)
     }
     gifPlayFromSDCard(gifFilename, fileindex);
   }
+#else
+  gifPlayFromSDCard(gifFilename, fileindex);
+#endif
 }
 
 // Reserve a block of PSRAM to play gif since it is faster than the SD card
