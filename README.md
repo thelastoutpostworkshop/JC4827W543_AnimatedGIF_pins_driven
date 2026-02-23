@@ -1,6 +1,6 @@
 # JC4827W543 Animated GIF (Pin Driven)
 
-This project plays GIFs from SD card based on the state of 3 GPIO pins on an ESP32-S3.
+This project plays GIFs from SD card based on the state of 3 GPIO pins on an ESP32-S3, with an optional startup GIF that plays once at boot.
 
 ## Pin To GIF Mapping
 
@@ -23,7 +23,10 @@ Mapping:
   - `/gif/alien_eye.gif`
   - `/gif/bird.gif`
   - `/gif/train.gif`
+- Optional startup GIF (plays once at power-up if present):
+  - `/gif/startup.gif` (configured by `STARTUP_GIF_PATH`)
 - On startup, the sketch verifies all 3 files can be opened.
+- If the startup GIF file is missing, the sketch logs a message and continues normally.
 
 ## Switch Wiring (Internal Pull-Up, Active-LOW)
 
@@ -48,6 +51,7 @@ Important:
 
 ## Runtime Behavior
 
+- At boot, `/gif/startup.gif` is played once (if the file exists).
 - The loop checks pins in this order: `46`, then `9`, then `14`.
 - If multiple pins are active at once, the first active pin in that order wins.
 - A GIF keeps playing while its pin remains active.
@@ -69,4 +73,5 @@ To change behavior, edit:
 
 - `VIDEO_PINS[]` for GPIO assignment.
 - `VIDEO_GIF_PATHS[]` for GIF file paths.
+- `STARTUP_GIF_PATH` for the one-time boot GIF path (set to an empty string to disable).
 - `VIDEO_ACTIVE_LEVEL` for trigger polarity (`HIGH` or `LOW`).
