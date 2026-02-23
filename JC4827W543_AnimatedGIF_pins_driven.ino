@@ -14,6 +14,7 @@ const char *VIDEO_GIF_PATHS[] = {
     "/gif/bird.gif", // Pin 9
     "/gif/train.gif"  // Pin 14
 };
+const char *STARTUP_GIF_PATH = "/gif/startup.gif"; // Played once at boot if present on the SD card.
 
 static_assert((sizeof(VIDEO_GIF_PATHS) / sizeof(VIDEO_GIF_PATHS[0])) == VIDEO_COUNT,
               "VIDEO_GIF_PATHS count must match VIDEO_PINS count");
@@ -40,8 +41,10 @@ int getSelectedVideoIndex();
 bool isVideoStillSelected(int expectedVideo);
 void playSelectedFile(int fileindex);
 bool loadHardcodedGifInfo();
+void playStartupGifOnce();
 uint8_t *reservePSRAM();
 void gifPlayFromSDCard(const char *gifPath, int expectedVideo);
+void gifPlayFromSDCardOnce(const char *gifPath);
 static void *GIFOpenFile(const char *fname, int32_t *pSize);
 static void GIFCloseFile(void *pHandle);
 static int32_t GIFReadFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen);
@@ -117,6 +120,8 @@ void setup()
   {
     Serial.printf("Pin %u -> %s\n", VIDEO_PINS[i], VIDEO_GIF_PATHS[i]);
   }
+
+  playStartupGifOnce();
 }
 
 void loop()
@@ -216,6 +221,27 @@ bool loadHardcodedGifInfo()
   }
 
   return true;
+}
+
+void playStartupGifOnce()
+{
+  if (STARTUP_GIF_PATH == NULL || STARTUP_GIF_PATH[0] == '\0')
+  {
+    Serial.println("Startup GIF disabled.");
+    return;
+  }
+
+  File startupGifFile = SD.open(STARTUP_GIF_PATH);
+  if (!startupGifFile)
+  {
+    Serial.printf("Startup GIF not found: %s\n", STARTUP_GIF_PATH);
+    return;
+  }
+
+  Serial.printf("Startup GIF: %s (%lu bytes)\n", STARTUP_GIF_PATH, startupGifFile.size());
+  startupGifFile.close();
+
+  gifPlayFromSDCardOnce(STARTUP_GIF_PATH);
 }
 
 // Play the selected gif file
@@ -337,6 +363,22 @@ void gifPlayFromSDCard(const char *gifPath, int expectedVideo)
 
     gif.close();
   }
+}
+
+void gifPlayFromSDCardOnce(const char *gifPath)
+{
+  if (!gif.open(gifPath, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw))
+  {
+    Serial.printf("Could not open startup gif %s\n", gifPath);
+    return;
+  }
+
+  gfx->fillScreen(RGB565_BLACK);
+  Serial.printf("Playing startup gif once: %s\n", gifPath);
+  while (gif.playFrame(false /*change to true to use the internal gif frame duration*/, NULL))
+  {
+  }
+  gif.close();
 }
 
 // Callback function to open a gif file from the SD card
