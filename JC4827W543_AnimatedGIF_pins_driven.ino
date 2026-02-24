@@ -26,6 +26,7 @@ static File FSGifFile; // temp gif file holder
 static int lastSelectedVideo = -2;
 static uint8_t lastVideoPinStates[VIDEO_COUNT] = {0};
 static bool videoPinStatesInitialized = false;
+static bool startupGifAvailable = false;
 static uint32_t lastPinLogTimeMs = 0;
 const uint32_t PIN_STATE_LOG_INTERVAL_MS = 500;
 
@@ -132,8 +133,15 @@ void loop()
   {
     if (selectedVideo < 0)
     {
-      Serial.println("No active pin, waiting...");
-      gfx->fillScreen(RGB565_BLACK);
+      if (startupGifAvailable)
+      {
+        Serial.printf("No active pin, looping startup GIF -> %s\n", STARTUP_GIF_PATH);
+      }
+      else
+      {
+        Serial.println("No active pin, waiting...");
+        gfx->fillScreen(RGB565_BLACK);
+      }
     }
     else
     {
@@ -144,7 +152,14 @@ void loop()
 
   if (selectedVideo < 0)
   {
-    delay(20);
+    if (startupGifAvailable)
+    {
+      gifPlayFromSDCard(STARTUP_GIF_PATH, -1);
+    }
+    else
+    {
+      delay(20);
+    }
     return;
   }
 
@@ -225,6 +240,8 @@ bool loadHardcodedGifInfo()
 
 void playStartupGifOnce()
 {
+  startupGifAvailable = false;
+
   if (STARTUP_GIF_PATH == NULL || STARTUP_GIF_PATH[0] == '\0')
   {
     Serial.println("Startup GIF disabled.");
@@ -239,6 +256,7 @@ void playStartupGifOnce()
   }
 
   Serial.printf("Startup GIF: %s (%lu bytes)\n", STARTUP_GIF_PATH, startupGifFile.size());
+  startupGifAvailable = true;
   startupGifFile.close();
 
   gifPlayFromSDCardOnce(STARTUP_GIF_PATH);
